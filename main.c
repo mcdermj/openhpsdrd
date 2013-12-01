@@ -7,6 +7,7 @@
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <string.h>
+#include <arpa/inet.h>
 #include <getopt.h>
 #include <errno.h>
 
@@ -22,7 +23,7 @@ int main(int argc, char **argv) {
     ssize_t bytesReceived;
     struct sockaddr_in bindAddress;
     struct sockaddr_in packetAddress;
-    int packetAddressLength;
+    socklen_t packetAddressLength;
     MetisPacket receivedPacket;
     const int one = 1;
     short port = 1024;
@@ -62,7 +63,7 @@ int main(int argc, char **argv) {
 
     if((serviceSocket = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
         perror("Service Socket: ");
-        exit(0);
+        exit(1);
     }
 
     bindAddress.sin_family = AF_INET;
@@ -73,12 +74,12 @@ int main(int argc, char **argv) {
     //  Set some socket options
     if(setsockopt(serviceSocket, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) == -1) {
         perror("Setting REUSEADDR: ");
-        exit(0);
+        exit(1);
     }
 
     if(bind(serviceSocket, (struct sockaddr *) &bindAddress, sizeof(bindAddress)) == -1) {
         perror("Bind Socket: ");
-        error(0);
+        exit(1);
     }
 
     for(;;) {
@@ -86,32 +87,34 @@ int main(int argc, char **argv) {
         if(bytesReceived == -1) {
             //  Need to trap EAGAIN or EWOULDBLOCK
             perror("Receiving packet:");
-            exit(0);
+            exit(1);
         }
 
         switch(receivedPacket.opcode) {
+        	case 0x01:
+        		// printf("Data packet received\n");
+        		break;
             case 0x02:
                 discoveryHandler((MetisDiscoveryRequest *) &receivedPacket, &packetAddress, serviceSocket);
                 break;
             case 0x04:
                 startStopHandler((MetisStartStop *) &receivedPacket, &packetAddress, serviceSocket);
                 break;
-            case 0x01:
-                // printf("Data packet received\n");
-                break;
             default:
-                printf("Unknown pakcet received\n");
+                printf("Unknown packet received\n");
                 break;
         }
     }
     close(serviceSocket);
+
+    return(0);
 }
 
 void discoveryHandler(MetisDiscoveryRequest *request, struct sockaddr_in *clientAddr, int serviceSocket) {
     char ipString[16];
     MetisDiscoveryReply replyPacket;
     struct ifreq buffer;
-    int i;
+    // int i;
     ssize_t bytesWritten;
 
     if(inet_ntop(AF_INET, &clientAddr->sin_addr.s_addr, ipString, sizeof(ipString)) == NULL) {
