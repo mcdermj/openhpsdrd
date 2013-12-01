@@ -12,5 +12,6 @@ void discoveryHandler(MetisDiscoveryRequest *request, struct sockaddr_in *client
 void startStopHandler(MetisStartStop *request, struct sockaddr_in *clientAddr, int serviceSocket);
 void socketServiceLoop(short port);
 void *IQTransmitLoop();
+void constructHeader(unsigned char *roundRobin, OzyPacket *packet);
 
 #endif /* NETWORK_H_ */

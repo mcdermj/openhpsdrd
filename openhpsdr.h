@@ -53,8 +53,7 @@ typedef struct _ozyPacket {
 } __attribute__((packed)) OzyPacket;
 
 typedef struct _metisPacket {
-    u_int16_t magic;
-    u_int8_t opcode;
+    MetisDataHeader header;
     OzyPacket packets[2];
 } __attribute__((packed)) MetisPacket;
 

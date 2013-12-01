@@ -19,6 +19,8 @@
 #include "openhpsdr.h"
 #include "network.h"
 
+#define SYNC 0x7F
+
 static struct sockaddr_in *clientAddr = NULL;
 static int IQThreadRunning = 0;
 static pthread_t IQTransmitThread;
@@ -60,7 +62,7 @@ void socketServiceLoop(short port) {
             exit(1);
         }
 
-        switch(receivedPacket.opcode) {
+        switch(receivedPacket.header.opcode) {
         	case 0x01:
         		// printf("Data packet received\n");
         		break;
@@ -164,14 +166,21 @@ void *IQTransmitLoop() {
 	int i, j;
 	MetisPacket metisPacket;
 	ssize_t bytesWritten;
+	unsigned int sequence = 0;
+	unsigned char roundRobin = 0;
 
 	//  Prepare MetisPacket attributes that won't change
-	metisPacket.packets[0].magic[0] = 0x7F;
-	metisPacket.packets[0].magic[1] = 0x7F;
-	metisPacket.packets[0].magic[2] = 0x7F;
-	metisPacket.packets[1].magic[0] = 0x7F;
-	metisPacket.packets[1].magic[1] = 0x7F;
-	metisPacket.packets[1].magic[2] = 0x7F;
+	metisPacket.header.magic = htons(0xEFFE);
+	metisPacket.header.opcode = 0x01;
+	metisPacket.header.endpoint = 0x06;
+
+	metisPacket.packets[0].magic[0] = SYNC;
+	metisPacket.packets[0].magic[1] = SYNC;
+	metisPacket.packets[0].magic[2] = SYNC;
+	metisPacket.packets[1].magic[0] = SYNC;
+	metisPacket.packets[1].magic[1] = SYNC;
+	metisPacket.packets[1].magic[2] = SYNC;
+
 
 	//  These eventually should rotate
 	metisPacket.packets[0].header[0] = 0x0;
@@ -187,17 +196,23 @@ void *IQTransmitLoop() {
 
 	for(j = 0; j < 2; ++j) {
 		for(i = 0; i < 63; ++i) {
-			memset(&metisPacket.packets[0].samples.in[i].i, 1, 3);
-			memset(&metisPacket.packets[0].samples.in[i].q, 0, 3);
+			memset(&metisPacket.packets[j].samples.in[i].i, 0xFF, 3);
+			memset(&metisPacket.packets[j].samples.in[i].q, 0x00, 3);
 		}
 	}
 
 	printf("Starting Transmit Thread\n");
 	while(IQThreadRunning) {
-		++i;
 		if(clientAddr == NULL) return NULL;
 
-		usleep(328);
+		// 384k
+		// usleep(328);
+		// 192k
+		usleep(656);
+
+		metisPacket.header.sequence = htonl(sequence++);
+		constructHeader(&roundRobin, &metisPacket.packets[0]);
+		constructHeader(&roundRobin, &metisPacket.packets[1]);
 
 		//  This is probably a thread issue here.  I should probably pass in clientAddr when the thread is created.
 	    bytesWritten = sendto(serviceSocket, &metisPacket, sizeof(metisPacket), 0, (struct sockaddr *) clientAddr, sizeof(struct sockaddr_in));
@@ -205,11 +220,55 @@ void *IQTransmitLoop() {
 	        perror("Sending Data Packet: ");
 	        return NULL;
 	    }
-
-		//if(i % 1000 == 0)
-		//	printf("Transmit thread looping\n");
 	}
 
 	printf("Ending transmit thread\n");
 	return NULL;
+}
+
+void constructHeader(unsigned char *roundRobin, OzyPacket *packet) {
+	packet->header[0] = *roundRobin << 3;
+
+	switch(*roundRobin) {
+	case 0:
+		(*roundRobin)++;
+		packet->header[2] = 0x00;
+		packet->header[3] = 0x00;
+		packet->header[4] = 35;
+		break;
+	case 1:
+		//  Analog in lines
+		packet->header[1] = 0x00;
+		packet->header[2] = 0x00;
+		packet->header[3] = 0x00;
+		packet->header[4] = 0x00;
+		(*roundRobin)++;
+		break;
+	case 2:
+		//  Analog in lines
+		packet->header[1] = 0x00;
+		packet->header[2] = 0x00;
+		packet->header[3] = 0x00;
+		packet->header[4] = 0x00;
+		(*roundRobin)++;
+		break;
+	case 3:
+		// Analog in lines
+		packet->header[1] = 0x00;
+		packet->header[2] = 0x00;
+		packet->header[3] = 0x00;
+		packet->header[4] = 0x00;
+		(*roundRobin)++;
+		break;
+	case 4:
+		packet->header[1] = 35 << 1;
+		packet->header[2] = 0x00;
+		packet->header[3] = 0x00;
+		packet->header[4] = 0x00;
+		(*roundRobin) = 0x00;
+		break;
+	default:
+		fprintf(stderr, "Shouldn't ever be here!");
+		break;
+	}
 }
