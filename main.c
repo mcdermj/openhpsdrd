@@ -7,11 +7,14 @@
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <string.h>
+#include <getopt.h>
+#include <errno.h>
 
 #include "openhpsdr.h"
 
 void discoveryHandler(MetisDiscoveryRequest *request, struct sockaddr_in *clientAddr, int serviceSocket);
 void startStopHandler(MetisStartStop *request, struct sockaddr_in *clientAddr, int serviceSocket);
+void usage(int exitcode);
 
 int main(int argc, char **argv) {
 
@@ -22,6 +25,40 @@ int main(int argc, char **argv) {
     int packetAddressLength;
     MetisPacket receivedPacket;
     const int one = 1;
+    short port = 1024;
+    short int_arg = 0;
+    int option;
+
+    //  Parse arguments
+    while((option = getopt(argc, argv, ":p:h")) != -1) {
+    	switch(option) {
+    	case 'h':
+    		usage(0);
+    		break;
+    	case 'p':
+    		int_arg = (short) atoi(optarg);
+
+    		if(int_arg == 0 || errno == ERANGE) {
+    			fprintf(stderr, "Invalid port number: %s\n", optarg);
+    			exit(1);
+    		}
+
+    		port = int_arg;
+    		break;
+    	case '?':
+    		fprintf(stderr, "Unknown option %c\n", optopt);
+    		usage(1);
+    		break;
+    	case ':':
+    		fprintf(stderr, "Missing option %c\n", optopt);
+    		usage(1);
+    		break;
+    	default:
+    		fprintf(stderr, "We shouldn't ever be here: %c\n", option);
+    		usage(1);
+    		break;
+    	}
+    }
 
     if((serviceSocket = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
         perror("Service Socket: ");
@@ -30,8 +67,8 @@ int main(int argc, char **argv) {
 
     bindAddress.sin_family = AF_INET;
     bindAddress.sin_addr.s_addr = htonl(INADDR_ANY);
-    //  This should be a settalbe parameter
-    bindAddress.sin_port = htons(1024); 
+    //  This should be a settable parameter
+    bindAddress.sin_port = htons(port);
 
     //  Set some socket options
     if(setsockopt(serviceSocket, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) == -1) {
@@ -127,3 +164,9 @@ void startStopHandler(MetisStartStop *request, struct sockaddr_in *clientAddr, i
         printf("Stopping wideband stream\n");
     }
 }
+
+void usage(int exitcode) {
+	fprintf(stderr, "Usage: openhpsdrd [-p port]\n");
+	exit(exitcode);
+}
+
