@@ -3,8 +3,9 @@
 # All Rights Reserved.
 #
 
-C_SRC := main.c
+C_SRC := main.c network.c
 CFLAGS := -g -O0 -Werror -Wall
+LDFLAGS := -lpthread
 
 CROSS_COMPILE := arm-linux-gnueabihf-
 CC := $(CROSS_COMPILE)gcc

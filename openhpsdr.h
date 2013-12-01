@@ -30,10 +30,32 @@ typedef struct _metisStartStop {
     u_int8_t padding[60];
 } __attribute__((packed)) MetisStartStop;
 
+typedef struct _ozySamplesIn {
+	u_int8_t i[3];
+	u_int8_t q[3];
+	u_int16_t mic;
+} __attribute__((packed)) OzySamplesIn;
+
+typedef struct _ozySamplesOut {
+	int16_t leftRx;
+	int16_t rightRx;
+	int16_t leftTx;
+	int16_t rightTx;
+} __attribute__((packed)) OzySamplesOut;
+
+typedef struct _ozyPacket {
+	u_int8_t magic[3];
+	u_int8_t header[5];
+	union _samples {
+		OzySamplesIn in[63];
+		OzySamplesOut out[63];
+	} samples;
+} __attribute__((packed)) OzyPacket;
+
 typedef struct _metisPacket {
     u_int16_t magic;
     u_int8_t opcode;
-    u_int8_t padding[1029];
+    OzyPacket packets[2];
 } __attribute__((packed)) MetisPacket;
 
 #endif /* openhpsdr.h */
