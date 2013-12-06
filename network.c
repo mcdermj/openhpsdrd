@@ -18,6 +18,7 @@
 
 #include "openhpsdr.h"
 #include "network.h"
+#include "../hpsdr/hpsdr.h"
 
 #define SYNC 0x7F
 
@@ -26,7 +27,7 @@ static int IQThreadRunning = 0;
 static pthread_t IQTransmitThread;
 static int serviceSocket;
 
-void socketServiceLoop(short port) {
+void socketServiceLoop(short port, int txDevice) {
     ssize_t bytesReceived;
     struct sockaddr_in bindAddress;
     struct sockaddr_in packetAddress;
@@ -63,9 +64,12 @@ void socketServiceLoop(short port) {
         }
 
         switch(receivedPacket.header.opcode) {
-        	case 0x01:
-        		// printf("Data packet received\n");
-        		break;
+   	    case 0x01:
+		//  Sequence number and endpoint should get checked and 
+		//  validated here
+		parseOzyPacket(&receivedPacket.packets[0], txDevice);
+		parseOzyPacket(&receivedPacket.packets[1], txDevice);
+        	break;
             case 0x02:
                 discoveryHandler((MetisDiscoveryRequest *) &receivedPacket, &packetAddress, serviceSocket);
                 break;
@@ -79,6 +83,36 @@ void socketServiceLoop(short port) {
     }
 
     close(serviceSocket);
+}
+
+void parseOzyPacket(OzyPacket *packet, int txDevice) {
+	switch(packet->header[0] >> 1) {
+		case 0:
+			// Parse out the preamp
+			//  We should probably check to see if this has changed
+			//  before we go and do a syscall every packet
+			if((packet->header[3] & 0x04) > 0) {
+				ioctl(txDevice, HPSDR_IOCTPREAMP, 1);
+			} else {
+				ioctl(txDevice, HPSDR_IOCTPREAMP, 0);
+			}
+			break;
+		case 1:
+		case 2:
+		case 3:
+		case 4:
+		case 5:
+		case 6:
+		case 7:
+		case 8:
+		case 9:
+		case 10:
+		case 11:
+			break;
+		default:
+			printf("Unknown value of C0 received: %d\n",packet->header[0] >> 1);
+			break;
+	}
 }
 
 

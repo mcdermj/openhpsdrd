@@ -5,6 +5,7 @@
 #include <getopt.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <fcntl.h>
 
 #include "openhpsdr.h"
 #include "network.h"
@@ -15,6 +16,7 @@ int main(int argc, char **argv) {
     short port = 1024;
     short int_arg = 0;
     int option;
+    int txDevice;
 
     //  Parse arguments
     while((option = getopt(argc, argv, ":p:h")) != -1) {
@@ -47,7 +49,13 @@ int main(int argc, char **argv) {
     	}
     }
 
-    socketServiceLoop(port);
+    //  Open the transmitter control file
+    if((txDevice = open("/dev/hpsdrtx", O_WRONLY)) == -1) {
+        perror("Couldn't open /dev/hpsdrtx\n");
+	exit(1);
+    }
+
+    socketServiceLoop(port, txDevice);
 
     return(0);
 }
