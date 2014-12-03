@@ -15,10 +15,10 @@
 #include <string.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <fcntl.h>
 
 #include "openhpsdr.h"
 #include "network.h"
-#include "../hpsdr/hpsdr.h"
 
 #define SYNC 0x7F
 
@@ -56,20 +56,27 @@ void socketServiceLoop(short port, int txDevice) {
     }
 
     for(;;) {
+    	packetAddressLength = sizeof(packetAddress);
+    
         bytesReceived = recvfrom(serviceSocket, &receivedPacket, sizeof(receivedPacket), 0, (struct sockaddr *) &packetAddress, &packetAddressLength);
         if(bytesReceived == -1) {
             //  Need to trap EAGAIN or EWOULDBLOCK
             perror("Receiving packet:");
             exit(1);
         }
+        
+        if(receivedPacket.header.magic != 0xFEEF) {
+        	fprintf(stderr, "Bad magic on packet: 0x%x\n", receivedPacket.header.magic);
+        	continue;
+        }
 
         switch(receivedPacket.header.opcode) {
-   	    case 0x01:
-		//  Sequence number and endpoint should get checked and 
-		//  validated here
-		parseOzyPacket(&receivedPacket.packets[0], txDevice);
-		parseOzyPacket(&receivedPacket.packets[1], txDevice);
-        	break;
+   	    	case 0x01:
+				//  Sequence number and endpoint should get checked and 
+				//  validated here
+				parseOzyPacket(&receivedPacket.packets[0], txDevice);
+				parseOzyPacket(&receivedPacket.packets[1], txDevice);
+        		break;
             case 0x02:
                 discoveryHandler((MetisDiscoveryRequest *) &receivedPacket, &packetAddress, serviceSocket);
                 break;
@@ -92,9 +99,7 @@ void parseOzyPacket(OzyPacket *packet, int txDevice) {
 			//  We should probably check to see if this has changed
 			//  before we go and do a syscall every packet
 			if((packet->header[3] & 0x04) > 0) {
-				ioctl(txDevice, HPSDR_IOCTPREAMP, 1);
 			} else {
-				ioctl(txDevice, HPSDR_IOCTPREAMP, 0);
 			}
 			break;
 		case 1:
@@ -145,7 +150,7 @@ void discoveryHandler(MetisDiscoveryRequest *request, struct sockaddr_in *client
     //  Version should be derived from somewhere sane.
     replyPacket.version = 0x1A;
 
-    replyPacket.boardid = 0x05;
+    replyPacket.boardid = 0x01;
 
     memset(&replyPacket.padding, 0x00, sizeof(replyPacket.padding));
 
@@ -155,13 +160,13 @@ void discoveryHandler(MetisDiscoveryRequest *request, struct sockaddr_in *client
         return;
     }
 
-    printf("Sent reply of %d bytes to %s on port %d\n", (int) bytesWritten, ipString, clientAddr->sin_port);
+    printf("Sent reply of %d bytes to %s on port %d\n", (int) bytesWritten, ipString, ntohs(clientAddr->sin_port));
 }
 
 void startStopHandler(MetisStartStop *request, struct sockaddr_in *addr, int serviceSocket) {
     printf("Entering Start/Stop Handler\n");
 
-    if(request->startStop && 0x01 == 0x01) {
+    if(request->startStop && request->startStop == 0x01) {
     	if(clientAddr != NULL) {
     		fprintf(stderr, "Receiver already in use\n");
     		return;
@@ -197,11 +202,13 @@ void startStopHandler(MetisStartStop *request, struct sockaddr_in *addr, int ser
 }
 
 void *IQTransmitLoop() {
-	int i, j;
+	int i, j, sampleNum;
 	MetisPacket metisPacket;
 	ssize_t bytesWritten;
 	unsigned int sequence = 0;
 	unsigned char roundRobin = 0;
+	int receiverDevice = 0;
+	int IQSamples[252];
 
 	//  Prepare MetisPacket attributes that won't change
 	metisPacket.header.magic = htons(0xEFFE);
@@ -230,19 +237,46 @@ void *IQTransmitLoop() {
 
 	for(j = 0; j < 2; ++j) {
 		for(i = 0; i < 63; ++i) {
-			memset(&metisPacket.packets[j].samples.in[i].i, 0xFF, 3);
+			metisPacket.packets[j].samples.in[i].mic = 0;
+			memset(&metisPacket.packets[j].samples.in[i].i, 0x00, 3);
 			memset(&metisPacket.packets[j].samples.in[i].q, 0x00, 3);
 		}
+	}
+	
+	if((receiverDevice = open("/dev/hpsdrrx0", O_RDONLY)) == -1) {
+		perror("Opening Receiver Device: ");
+		return NULL;
 	}
 
 	printf("Starting Transmit Thread\n");
 	while(IQThreadRunning) {
-		if(clientAddr == NULL) return NULL;
+		if(clientAddr == NULL) break;
 
 		// 384k
 		// usleep(328);
 		// 192k
-		usleep(656);
+		//usleep(656);
+		
+		// Read 63 I/Q samples from the hardware
+		if(read(receiverDevice, IQSamples, sizeof(IQSamples)) == -1) {
+			perror("Reading IQ Samples: ");
+			continue;
+		}
+		
+		for(j = 0, sampleNum = 0; j < 2; ++j) {
+			for(i = 0; i < 63; ++i, ++sampleNum) {
+				metisPacket.packets[j].samples.in[i].i[2] = IQSamples[sampleNum] & 0xFF;
+				metisPacket.packets[j].samples.in[i].i[1] = IQSamples[sampleNum] >> 8 & 0xFF;
+				metisPacket.packets[j].samples.in[i].i[0] = IQSamples[sampleNum++] >> 16 & 0xFF;
+				
+				metisPacket.packets[j].samples.in[i].q[2] = IQSamples[sampleNum] & 0xFF;
+				metisPacket.packets[j].samples.in[i].q[1] = IQSamples[sampleNum] >> 8 & 0xFF;
+				metisPacket.packets[j].samples.in[i].q[0] = IQSamples[sampleNum] >> 16 & 0xFF;
+				
+				/*memcpy(&metisPacket.packets[j].samples.in[i].i, &IQSamples[sampleNum++], 3);
+				memcpy(&metisPacket.packets[j].samples.in[i].q, &IQSamples[sampleNum], 3);*/
+			}
+		}
 
 		metisPacket.header.sequence = htonl(sequence++);
 		constructHeader(&roundRobin, &metisPacket.packets[0]);
@@ -252,9 +286,11 @@ void *IQTransmitLoop() {
 	    bytesWritten = sendto(serviceSocket, &metisPacket, sizeof(metisPacket), 0, (struct sockaddr *) clientAddr, sizeof(struct sockaddr_in));
 	    if(bytesWritten == -1) {
 	        perror("Sending Data Packet: ");
-	        return NULL;
+	        break;
 	    }
 	}
+	
+	close(receiverDevice);
 
 	printf("Ending transmit thread\n");
 	return NULL;
@@ -264,45 +300,45 @@ void constructHeader(unsigned char *roundRobin, OzyPacket *packet) {
 	packet->header[0] = *roundRobin << 3;
 
 	switch(*roundRobin) {
-	case 0:
-		(*roundRobin)++;
-		packet->header[2] = 0x00;
-		packet->header[3] = 0x00;
-		packet->header[4] = 35;
-		break;
-	case 1:
-		//  Analog in lines
-		packet->header[1] = 0x00;
-		packet->header[2] = 0x00;
-		packet->header[3] = 0x00;
-		packet->header[4] = 0x00;
-		(*roundRobin)++;
-		break;
-	case 2:
-		//  Analog in lines
-		packet->header[1] = 0x00;
-		packet->header[2] = 0x00;
-		packet->header[3] = 0x00;
-		packet->header[4] = 0x00;
-		(*roundRobin)++;
-		break;
-	case 3:
-		// Analog in lines
-		packet->header[1] = 0x00;
-		packet->header[2] = 0x00;
-		packet->header[3] = 0x00;
-		packet->header[4] = 0x00;
-		(*roundRobin)++;
-		break;
-	case 4:
-		packet->header[1] = 35 << 1;
-		packet->header[2] = 0x00;
-		packet->header[3] = 0x00;
-		packet->header[4] = 0x00;
-		(*roundRobin) = 0x00;
-		break;
-	default:
-		fprintf(stderr, "Shouldn't ever be here!");
-		break;
+		case 0:
+			packet->header[2] = 0x00;
+			packet->header[3] = 0x00;
+			packet->header[4] = 35;
+			(*roundRobin)++;
+			break;
+		case 1:
+			//  Analog in lines
+			packet->header[1] = 0x00;
+			packet->header[2] = 0x00;
+			packet->header[3] = 0x00;
+			packet->header[4] = 0x00;
+			(*roundRobin)++;
+			break;
+		case 2:
+			//  Analog in lines
+			packet->header[1] = 0x00;
+			packet->header[2] = 0x00;
+			packet->header[3] = 0x00;
+			packet->header[4] = 0x00;
+			(*roundRobin)++;
+			break;
+		case 3:
+			// Analog in lines
+			packet->header[1] = 0x00;
+			packet->header[2] = 0x00;
+			packet->header[3] = 0x00;
+			packet->header[4] = 0x00;
+			(*roundRobin)++;
+			break;
+		case 4:
+			packet->header[1] = 35 << 1;
+			packet->header[2] = 0x00;
+			packet->header[3] = 0x00;
+			packet->header[4] = 0x00;
+			(*roundRobin) = 0x00;
+			break;
+		default:
+			fprintf(stderr, "Shouldn't ever be here!");
+			break;
 	}
 }

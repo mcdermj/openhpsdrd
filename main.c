@@ -16,7 +16,7 @@ int main(int argc, char **argv) {
     short port = 1024;
     short int_arg = 0;
     int option;
-    int txDevice;
+    //int txDevice;
 
     //  Parse arguments
     while((option = getopt(argc, argv, ":p:h")) != -1) {
@@ -50,12 +50,12 @@ int main(int argc, char **argv) {
     }
 
     //  Open the transmitter control file
-    if((txDevice = open("/dev/hpsdrtx", O_WRONLY)) == -1) {
-        perror("Couldn't open /dev/hpsdrtx\n");
-	exit(1);
-    }
+    //if((txDevice = open("/dev/hpsdrtx", O_WRONLY)) == -1) {
+    //    perror("Couldn't open /dev/hpsdrtx\n");
+	//exit(1);
+    //}
 
-    socketServiceLoop(port, txDevice);
+    socketServiceLoop(port, 0);
 
     return(0);
 }
