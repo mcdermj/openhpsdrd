@@ -1,0 +1,4 @@
+network.o
+*.o
+openhpsdrd
+*.map
