@@ -30,6 +30,8 @@ static int WidebandThreadRunning = 0;
 static pthread_t IQTransmitThread;
 static pthread_t WidebandTransmitThread;
 static int serviceSocket;
+static int frequencyFile;
+static unsigned int frequency = 10000000;
 
 void socketServiceLoop(short port, int txDevice) {
     ssize_t bytesReceived;
@@ -58,7 +60,11 @@ void socketServiceLoop(short port, int txDevice) {
         perror("Bind Socket: ");
         exit(1);
     }
-
+    
+    if((frequencyFile = open("/sys/class/hpsdr/hpsdrrx0/frequency", O_WRONLY)) == -1) {
+    	perror("Frequency file: ");
+    }
+    
     for(;;) {
     	packetAddressLength = sizeof(packetAddress);
     
@@ -97,6 +103,8 @@ void socketServiceLoop(short port, int txDevice) {
 }
 
 void parseOzyPacket(OzyPacket *packet, int txDevice) {
+	unsigned int newFrequency;
+	
 	switch(packet->header[0] >> 1) {
 		case 0:
 			// Parse out the preamp
@@ -107,7 +115,18 @@ void parseOzyPacket(OzyPacket *packet, int txDevice) {
 			}
 			break;
 		case 1:
+			//  Frequency for the transmitter
 		case 2:
+			//  Frequency for receiver 1
+			newFrequency = (packet->header[1] << 24) +
+			               (packet->header[2] << 16) +
+			               (packet->header[3] << 8) +
+			               packet->header[4];
+			if(frequency != newFrequency) {
+				fprintf(stderr, "Changed frequency to %u\n", frequency);
+				dprintf(frequencyFile, "%u", frequency);
+				frequency = newFrequency;
+			}
 		case 3:
 		case 4:
 		case 5:
