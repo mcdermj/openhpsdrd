@@ -284,11 +284,6 @@ void *IQTransmitLoop(void *args) {
 	printf("Starting Transmit Thread\n");
 	while(IQThreadRunning) {
 		if(clientAddr == NULL) break;
-
-		// 384k
-		// usleep(328);
-		// 192k
-		//usleep(656);
 		
 		// Read 63 I/Q samples from the hardware
 		if(read(receiverDevice, IQSamples, sizeof(IQSamples)) == -1) {
@@ -297,14 +292,16 @@ void *IQTransmitLoop(void *args) {
 		}
 		
 		for(j = 0, sampleNum = 0; j < 2; ++j) {
-			for(i = 0; i < 63; ++i, ++sampleNum) {
+			for(i = 0; i < 63; ++i) {
+				//printf("Processing sample %d\n", sampleNum);
 				metisPacket.packets[j].samples.in[i].i[2] = IQSamples[sampleNum] & 0xFF;
 				metisPacket.packets[j].samples.in[i].i[1] = IQSamples[sampleNum] >> 8 & 0xFF;
 				metisPacket.packets[j].samples.in[i].i[0] = IQSamples[sampleNum++] >> 16 & 0xFF;
 				
+				//printf("Processing sample %d\n", sampleNum);
 				metisPacket.packets[j].samples.in[i].q[2] = IQSamples[sampleNum] & 0xFF;
 				metisPacket.packets[j].samples.in[i].q[1] = IQSamples[sampleNum] >> 8 & 0xFF;
-				metisPacket.packets[j].samples.in[i].q[0] = IQSamples[sampleNum] >> 16 & 0xFF;
+				metisPacket.packets[j].samples.in[i].q[0] = IQSamples[sampleNum++] >> 16 & 0xFF;
 				
 				/*memcpy(&metisPacket.packets[j].samples.in[i].i, &IQSamples[sampleNum++], 3);
 				memcpy(&metisPacket.packets[j].samples.in[i].q, &IQSamples[sampleNum], 3);*/
