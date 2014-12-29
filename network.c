@@ -22,9 +22,13 @@
 
 #define SYNC 0x7F
 
+//  XXX These are ugly and should go away mostly.
 static struct sockaddr_in *clientAddr = NULL;
+static struct sockaddr_in *widebandClientAddr = NULL;
 static int IQThreadRunning = 0;
+static int WidebandThreadRunning = 0;
 static pthread_t IQTransmitThread;
+static pthread_t WidebandTransmitThread;
 static int serviceSocket;
 
 void socketServiceLoop(short port, int txDevice) {
@@ -165,43 +169,50 @@ void discoveryHandler(MetisDiscoveryRequest *request, struct sockaddr_in *client
 
 void startStopHandler(MetisStartStop *request, struct sockaddr_in *addr, int serviceSocket) {
     printf("Entering Start/Stop Handler\n");
+    printf("Start/Stop value is %X\n", request->startStop);
+    
+    /* if(!request->startStop) {
+    	fprintf(stderr, "Invalid start/stop packet\n");
+    	return;
+    } */
 
-    if(request->startStop && request->startStop == 0x01) {
-    	if(clientAddr != NULL) {
-    		fprintf(stderr, "Receiver already in use\n");
-    		return;
-    	}
-    	clientAddr = malloc(sizeof(struct sockaddr_in));
-    	memcpy(clientAddr, addr, sizeof(struct sockaddr_in));
+    if((request->startStop & 0x01) == 1 && IQThreadRunning == 0) {
         printf("Starting I/Q Stream\n");
         IQThreadRunning = 1;
-        if(pthread_create(&IQTransmitThread, NULL, IQTransmitLoop, NULL) != 0) {
+        if(pthread_create(&IQTransmitThread, NULL, IQTransmitLoop, addr) != 0) {
         	perror("Creating IQ Transmit Thread:");
         	return;
         }
-    } else {
-    	if(clientAddr == NULL) {
-    		fprintf(stderr, "Received stop command while not streaming\n");
-    		return;
-    	}
+    } else if((request->startStop & 0x01) == 0 && IQThreadRunning == 1) {
     	if(addr->sin_addr.s_addr != clientAddr->sin_addr.s_addr) {
     		fprintf(stderr, "Received Stop command from invalid address\n");
     		return;
     	}
     	IQThreadRunning = 0;
-    	free(clientAddr);
-    	clientAddr = NULL;
         printf("Stopping I/Q Stream\n");
     }
 
-    if(request->startStop && 0x10 == 0x10) {
+    if((request->startStop & 0x10) == 1 && WidebandThreadRunning == 0) {
         printf("Starting wideband stream\n");
-    } else {
+        
+        WidebandThreadRunning = 1;
+        if(pthread_create(&WidebandTransmitThread, NULL, WidebandTransmitLoop, addr) != 0) {
+        	perror("Creating Wideband Transmit Thread:");
+        	return;
+        }
+
+    } else if((request->startStop & 0x10) == 0 && WidebandThreadRunning == 1) {
+    	if(addr->sin_addr.s_addr != widebandClientAddr->sin_addr.s_addr) {
+    		fprintf(stderr, "Received wideband Stop command from invalid address\n");
+    		return;
+    	}
+    	WidebandThreadRunning = 0;
+
         printf("Stopping wideband stream\n");
     }
 }
 
-void *IQTransmitLoop() {
+void *IQTransmitLoop(void *args) {
 	int i, j, sampleNum;
 	MetisPacket metisPacket;
 	ssize_t bytesWritten;
@@ -209,6 +220,9 @@ void *IQTransmitLoop() {
 	unsigned char roundRobin = 0;
 	int receiverDevice = 0;
 	int IQSamples[252];
+	
+	clientAddr = malloc(sizeof(struct sockaddr_in));
+    memcpy(clientAddr, args, sizeof(struct sockaddr_in));
 
 	//  Prepare MetisPacket attributes that won't change
 	metisPacket.header.magic = htons(0xEFFE);
@@ -290,11 +304,55 @@ void *IQTransmitLoop() {
 	    }
 	}
 	
-	close(receiverDevice);
+	if(close(receiverDevice) == -1) {
+		perror("Closing receiver:");
+	}
+	
+	free(clientAddr);
+	clientAddr = NULL;
 
 	printf("Ending transmit thread\n");
 	return NULL;
 }
+
+void *WidebandTransmitLoop(void *args) {
+	MetisPacket metisPacket;
+	ssize_t bytesWritten;
+	unsigned int sequence = 0;
+	
+	widebandClientAddr = malloc(sizeof(struct sockaddr_in));
+    memcpy(widebandClientAddr, args, sizeof(struct sockaddr_in));
+
+	//  Prepare MetisPacket attributes that won't change
+	metisPacket.header.magic = htons(0xEFFE);
+	metisPacket.header.opcode = 0x01;
+	metisPacket.header.endpoint = 0x04;
+	
+	memset(metisPacket.packets, 0, 1024);
+
+	printf("Starting Wideband Transmit Thread\n");
+	while(WidebandThreadRunning) {
+		if(widebandClientAddr == NULL) break;
+		
+		usleep(83);
+		
+		metisPacket.header.sequence = htonl(sequence++);
+
+		//  This is probably a thread issue here.  I should probably pass in clientAddr when the thread is created.
+	    bytesWritten = sendto(serviceSocket, &metisPacket, sizeof(metisPacket), 0, (struct sockaddr *) clientAddr, sizeof(struct sockaddr_in));
+	    if(bytesWritten == -1) {
+	        perror("Sending Data Packet: ");
+	        break;
+	    }
+	}
+	
+	free(widebandClientAddr);
+	widebandClientAddr = NULL;
+
+	printf("Ending Wideband transmit thread\n");
+	return NULL;
+}
+
 
 void constructHeader(unsigned char *roundRobin, OzyPacket *packet) {
 	packet->header[0] = *roundRobin << 3;
