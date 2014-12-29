@@ -21,9 +21,17 @@ all: $(ELF)
 clean:
 	$(RM) $(ELF) $(OBJ) *.objdump *.map
 
-$(OBJ): %.o: %.c
+#$(OBJ): %.o: %.c
+#%.o: %.c
+#	$(CC) $(CFLAGS) -c $< -o $@
+
+.c.o:
 	$(CC) $(CFLAGS) -c $< -o $@
+.c.o:
 
 $(ELF): $(OBJ)
 	$(CC) $(CFLAGS) $(OBJ) -o $@ $(LDFLAGS)
-	$(NM) $@ > $@.map
+
+testdevice: testdevice.o
+	$(CC) $(CFLAGS) testdevice.o -o $@ $(LDFLAGS)
+
