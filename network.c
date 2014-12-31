@@ -123,9 +123,9 @@ void parseOzyPacket(OzyPacket *packet, int txDevice) {
 			               (packet->header[3] << 8) +
 			               packet->header[4];
 			if(frequency != newFrequency) {
+				frequency = newFrequency;
 				fprintf(stderr, "Changed frequency to %u\n", frequency);
 				dprintf(frequencyFile, "%u", frequency);
-				frequency = newFrequency;
 			}
 		case 3:
 		case 4:
